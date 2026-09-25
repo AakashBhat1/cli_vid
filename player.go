@@ -259,12 +259,14 @@ func play(ctx context.Context, opts options, info *VideoInfo, actions <-chan Act
 					rendered = true
 				}
 				out.Reset()
+				out.WriteString("\x1b[?2025h")
 				if rendered {
 					out.WriteString("\x1b[H")
 					out.Write(frameBuf.Bytes())
 				}
 				fmt.Fprintf(&out, "\x1b[%d;1H", termH-1)
 				RenderOSD(&out, &state, termW)
+				out.WriteString("\x1b[?2025l")
 			}
 			if _, err := os.Stdout.Write(out.Bytes()); err != nil {
 				return fmt.Errorf("write terminal: %w", err)

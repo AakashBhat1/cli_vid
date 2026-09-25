@@ -53,8 +53,8 @@ func initConsole() (func(), error) {
 	restore := func() {
 		_ = windows.SetConsoleCP(inputCP)
 		_ = windows.SetConsoleOutputCP(outputCP)
-		// Restore normal screen buffer, show cursor, reset color
-		os.Stdout.WriteString("\x1b[0m\x1b[?25h\x1b[?1049l")
+		// Restore normal screen buffer, show cursor, reset color, disable sync update
+		os.Stdout.WriteString("\x1b[?2025l\x1b[0m\x1b[?25h\x1b[?1049l")
 		if originalStdoutMode != 0 {
 			_ = windows.SetConsoleMode(stdoutHandle, originalStdoutMode)
 		}
