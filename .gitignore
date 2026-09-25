@@ -1,0 +1,56 @@
+# Go Binaries and Build Artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/cli_vid
+*.test
+*.out
+*.prof
+*.cover
+coverage.txt
+
+# Python & uv Environment / Artifacts
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.uv/
+dist/
+build/
+*.egg-info/
+*.egg
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Test Media & Video Files (Large binaries)
+sample.mp4
+test_pattern.mp4
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+!assets/**
+
+# Logs & Diagnostics
+*.log
+tmp/
+temp/
+
+# Operating System & IDE Files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

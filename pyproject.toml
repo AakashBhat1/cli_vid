@@ -1,0 +1,17 @@
+[project]
+name = "cli-vid"
+version = "0.1.0"
+description = "High-performance CLI video player for terminals with TrueColor audio/video playback"
+readme = "README.md"
+authors = [
+    { name = "Aakash Bhat", email = "130649872+AakashBhat1@users.noreply.github.com" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+cli-vid = "cli_vid:main"
+
+[build-system]
+requires = ["uv_build>=0.12.6,<0.13.0"]
+build-backend = "uv_build"
