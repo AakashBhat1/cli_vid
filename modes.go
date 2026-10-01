@@ -13,6 +13,9 @@ const (
 	ModeASCII                       // 1: Classic Standard Colored ASCII (with Bayer Dithering)
 	ModeBraille                     // 2: High-density Braille Matrix (8 dots/cell with Dithering)
 	ModeMatrix                      // 3: Cyberpunk / Matrix Green Monochrome
+	ModeAmber                       // 4: Vintage Amber Phosphor CRT (Classic Terminal)
+	ModeNeon                        // 5: Cyberpunk Neon Edge (Sobel Contour)
+	ModeNoir                        // 6: Film Noir Grayscale (HD S-Curve)
 	modeCount                       // total count
 )
 
@@ -26,6 +29,12 @@ func (m RenderMode) Name() string {
 		return "Braille Matrix (High-Def)"
 	case ModeMatrix:
 		return "Matrix Green Monochrome"
+	case ModeAmber:
+		return "Vintage Amber Phosphor CRT"
+	case ModeNeon:
+		return "Cyberpunk Neon Edge (Sobel)"
+	case ModeNoir:
+		return "Film Noir Grayscale (HD)"
 	default:
 		return "Unknown"
 	}
@@ -41,13 +50,19 @@ func (m RenderMode) ShortName() string {
 		return "BRAILLE"
 	case ModeMatrix:
 		return "MATRIX"
+	case ModeAmber:
+		return "AMBER"
+	case ModeNeon:
+		return "NEON"
+	case ModeNoir:
+		return "NOIR"
 	default:
 		return "UNKNOWN"
 	}
 }
 
 func (m RenderMode) PixelAspect() float64 {
-	if m == ModeASCII || m == ModeMatrix {
+	if m == ModeASCII || m == ModeMatrix || m == ModeAmber {
 		return 0.5
 	}
 	return 1
@@ -63,14 +78,12 @@ func (m RenderMode) TargetDimensions(termW, termH int) (int, int) {
 	}
 
 	switch m {
-	case ModeHalfBlock:
+	case ModeHalfBlock, ModeNeon, ModeNoir:
 		return termW, termH * 2
-	case ModeASCII:
+	case ModeASCII, ModeMatrix, ModeAmber:
 		return termW, termH
 	case ModeBraille:
 		return termW * 2, termH * 4
-	case ModeMatrix:
-		return termW, termH
 	default:
 		return termW, termH
 	}
@@ -110,6 +123,23 @@ func appendBgRGB(buf *bytes.Buffer, r, g, b int) {
 	buf.WriteByte('m')
 }
 
+// rgbToLuminance computes perceptual ITU-R BT.601 luma
+func rgbToLuminance(r, g, b int) int {
+	return (299*r + 587*g + 114*b) / 1000
+}
+
+func absDiff(a, b int) int {
+	d := a - b
+	if d < 0 {
+		return -d
+	}
+	return d
+}
+
+func isColorClose(r1, g1, b1, r2, g2, b2, threshold int) bool {
+	return absDiff(r1, r2) <= threshold && absDiff(g1, g2) <= threshold && absDiff(b1, b2) <= threshold
+}
+
 // RenderFrame converts raw RGBA frame pixels to ANSI terminal output buffer with zero-allocation serialization
 func RenderFrame(buf *bytes.Buffer, img *image.RGBA, termW, termH int, mode RenderMode) {
 	buf.WriteString("\x1b[40m")
@@ -122,6 +152,12 @@ func RenderFrame(buf *bytes.Buffer, img *image.RGBA, termW, termH int, mode Rend
 		renderBraille(buf, img, termW, termH)
 	case ModeMatrix:
 		renderMatrix(buf, img, termW, termH)
+	case ModeAmber:
+		renderAmber(buf, img, termW, termH)
+	case ModeNeon:
+		renderNeon(buf, img, termW, termH)
+	case ModeNoir:
+		renderNoir(buf, img, termW, termH)
 	}
 }
 
@@ -164,20 +200,7 @@ func renderHalfBlock(buf *bytes.Buffer, img *image.RGBA, termW, termH int) {
 
 			// Optimization: If top and bottom colors are identical (within small threshold),
 			// emit ' ' with background color to eliminate foreground escape overhead!
-			diffR := tr - br
-			diffG := tg - bg
-			diffB := tb - bb
-			if diffR < 0 {
-				diffR = -diffR
-			}
-			if diffG < 0 {
-				diffG = -diffG
-			}
-			if diffB < 0 {
-				diffB = -diffB
-			}
-
-			if diffR <= 4 && diffG <= 4 && diffB <= 4 {
+			if isColorClose(tr, tg, tb, br, bg, bb, 4) {
 				if br != lastBgR || bg != lastBgG || bb != lastBgB {
 					appendBgRGB(buf, br, bg, bb)
 					lastBgR, lastBgG, lastBgB = br, bg, bb
@@ -232,7 +255,7 @@ func renderASCII(buf *bytes.Buffer, img *image.RGBA, termW, termH int) {
 			g := int(img.Pix[offset+1])
 			b := int(img.Pix[offset+2])
 
-			lum := (299*r + 587*g + 114*b) / 1000
+			lum := rgbToLuminance(r, g, b)
 
 			// 4x4 Bayer Dithering for smooth continuous gradient shading
 			ditherVal := (bayerMatrix4x4[y%4][x%4] - 8) * 3
@@ -335,7 +358,7 @@ func checkDitheredDot(img *image.RGBA, x, y, w, h int, sumR, sumG, sumB, count *
 	g := int(img.Pix[offset+1])
 	b := int(img.Pix[offset+2])
 
-	lum := (299*r + 587*g + 114*b) / 1000
+	lum := rgbToLuminance(r, g, b)
 
 	// Adaptive threshold with Bayer dithering
 	ditherVal := (bayerMatrix4x4[y%4][x%4] - 8) * 7
@@ -378,7 +401,7 @@ func renderMatrix(buf *bytes.Buffer, img *image.RGBA, termW, termH int) {
 			g := int(img.Pix[offset+1])
 			b := int(img.Pix[offset+2])
 
-			lum := (299*r + 587*g + 114*b) / 1000
+			lum := rgbToLuminance(r, g, b)
 
 			// Color grading for Matrix Green Phosphor
 			var mr, mg, mb int
@@ -411,3 +434,229 @@ func renderMatrix(buf *bytes.Buffer, img *image.RGBA, termW, termH int) {
 		lastR, lastG, lastB = -1, -1, -1
 	}
 }
+
+// renderAmber renders vintage amber phosphor CRT styling with classic terminal typography
+func renderAmber(buf *bytes.Buffer, img *image.RGBA, termW, termH int) {
+	bounds := img.Bounds()
+	imgW := bounds.Dx()
+	imgH := bounds.Dy()
+	rampLen := len(matrixRamp)
+
+	var lastR, lastG, lastB int = -1, -1, -1
+
+	for y := 0; y < termH; y++ {
+		if y >= imgH {
+			buf.WriteByte('\n')
+			continue
+		}
+		rowOffset := y * img.Stride
+
+		for x := 0; x < termW; x++ {
+			if x >= imgW {
+				buf.WriteByte(' ')
+				continue
+			}
+
+			offset := rowOffset + x*4
+			r := int(img.Pix[offset])
+			g := int(img.Pix[offset+1])
+			b := int(img.Pix[offset+2])
+
+			lum := rgbToLuminance(r, g, b)
+
+			// Color grading for Vintage Amber Phosphor (#FFB000)
+			var ar, ag, ab int
+			if lum < 30 {
+				ar, ag, ab = 0, 0, 0
+			} else if lum < 110 {
+				ar = lum * 18 / 10
+				ag = lum * 8 / 10
+				ab = 0
+			} else if lum < 200 {
+				ar = 255
+				ag = 120 + (lum-110)*75/90
+				ab = 8
+			} else {
+				ar = 255
+				ag = 195 + (lum-200)*60/55
+				ab = (lum - 200) * 160 / 55
+			}
+
+			idx := (lum * (rampLen - 1)) / 255
+			char := matrixRamp[idx]
+
+			if ar != lastR || ag != lastG || ab != lastB {
+				appendFgRGB(buf, ar, ag, ab)
+				lastR, lastG, lastB = ar, ag, ab
+			}
+			buf.WriteRune(char)
+		}
+		buf.WriteString("\x1b[0m\x1b[40m\r\n")
+		lastR, lastG, lastB = -1, -1, -1
+	}
+}
+
+// renderNeon renders cyberpunk synthwave edge-detection lines using Sobel filtering
+func renderNeon(buf *bytes.Buffer, img *image.RGBA, termW, termH int) {
+	bounds := img.Bounds()
+	imgW := bounds.Dx()
+	imgH := bounds.Dy()
+
+	var lastFgR, lastFgG, lastFgB int = -1, -1, -1
+	var lastBgR, lastBgG, lastBgB int = -1, -1, -1
+
+	sampleLum := func(px, py int) int {
+		if px < 0 {
+			px = 0
+		} else if px >= imgW {
+			px = imgW - 1
+		}
+		if py < 0 {
+			py = 0
+		} else if py >= imgH {
+			py = imgH - 1
+		}
+		off := py*img.Stride + px*4
+		return rgbToLuminance(int(img.Pix[off]), int(img.Pix[off+1]), int(img.Pix[off+2]))
+	}
+
+	evalPixel := func(px, py int) (int, int, int) {
+		if px >= imgW || py >= imgH {
+			return 8, 10, 20
+		}
+		gx := (sampleLum(px+1, py-1) + 2*sampleLum(px+1, py) + sampleLum(px+1, py+1)) -
+			(sampleLum(px-1, py-1) + 2*sampleLum(px-1, py) + sampleLum(px-1, py+1))
+		gy := (sampleLum(px-1, py+1) + 2*sampleLum(px, py+1) + sampleLum(px+1, py+1)) -
+			(sampleLum(px-1, py-1) + 2*sampleLum(px, py-1) + sampleLum(px+1, py-1))
+		absGx := gx
+		if absGx < 0 {
+			absGx = -absGx
+		}
+		absGy := gy
+		if absGy < 0 {
+			absGy = -absGy
+		}
+		mag := (absGx + absGy) / 4
+
+		if mag > 26 {
+			if absGx > absGy*2 {
+				// Vertical edge -> Electric Cyan
+				return 0, 235, 255
+			} else if absGy > absGx*2 {
+				// Horizontal edge -> Hot Neon Magenta
+				return 255, 30, 165
+			} else {
+				// Diagonal / Corner -> Neon Violet / Amber Accent
+				if mag > 75 {
+					return 255, 245, 100
+				}
+				return 185, 75, 255
+			}
+		}
+		// Flat region: deep cyber navy
+		return 8, 10, 20
+	}
+
+	for y := 0; y < termH; y++ {
+		topY := y * 2
+		botY := topY + 1
+
+		for x := 0; x < termW; x++ {
+			if x >= imgW {
+				buf.WriteByte(' ')
+				continue
+			}
+
+			tr, tg, tb := evalPixel(x, topY)
+			br, bg, bb := evalPixel(x, botY)
+
+			if isColorClose(tr, tg, tb, br, bg, bb, 4) {
+				if br != lastBgR || bg != lastBgG || bb != lastBgB {
+					appendBgRGB(buf, br, bg, bb)
+					lastBgR, lastBgG, lastBgB = br, bg, bb
+				}
+				buf.WriteByte(' ')
+				continue
+			}
+
+			if tr != lastFgR || tg != lastFgG || tb != lastFgB {
+				appendFgRGB(buf, tr, tg, tb)
+				lastFgR, lastFgG, lastFgB = tr, tg, tb
+			}
+			if br != lastBgR || bg != lastBgG || bb != lastBgB {
+				appendBgRGB(buf, br, bg, bb)
+				lastBgR, lastBgG, lastBgB = br, bg, bb
+			}
+			buf.WriteString("▀")
+		}
+		buf.WriteString("\x1b[0m\x1b[40m\r\n")
+		lastFgR, lastFgG, lastFgB = -1, -1, -1
+		lastBgR, lastBgG, lastBgB = -1, -1, -1
+	}
+}
+
+// renderNoir renders crisp film-noir monochrome with photographic S-curve contrast
+func renderNoir(buf *bytes.Buffer, img *image.RGBA, termW, termH int) {
+	bounds := img.Bounds()
+	imgW := bounds.Dx()
+	imgH := bounds.Dy()
+
+	var lastFgVal, lastBgVal int = -1, -1
+
+	noirContrast := func(r, g, b int) int {
+		lum := rgbToLuminance(r, g, b)
+		if lum < 128 {
+			return (lum * lum) / 128
+		}
+		diff := 255 - lum
+		return 255 - (diff*diff)/128
+	}
+
+	for y := 0; y < termH; y++ {
+		topY := y * 2
+		botY := topY + 1
+
+		for x := 0; x < termW; x++ {
+			if x >= imgW {
+				buf.WriteByte(' ')
+				continue
+			}
+
+			topOffset := topY*img.Stride + x*4
+			var tVal int
+			if topY < imgH {
+				tVal = noirContrast(int(img.Pix[topOffset]), int(img.Pix[topOffset+1]), int(img.Pix[topOffset+2]))
+			}
+
+			var bVal int
+			if botY < imgH {
+				botOffset := botY*img.Stride + x*4
+				bVal = noirContrast(int(img.Pix[botOffset]), int(img.Pix[botOffset+1]), int(img.Pix[botOffset+2]))
+			}
+
+			if absDiff(tVal, bVal) <= 4 {
+				if bVal != lastBgVal {
+					appendBgRGB(buf, bVal, bVal, bVal)
+					lastBgVal = bVal
+				}
+				buf.WriteByte(' ')
+				continue
+			}
+
+			if tVal != lastFgVal {
+				appendFgRGB(buf, tVal, tVal, tVal)
+				lastFgVal = tVal
+			}
+			if bVal != lastBgVal {
+				appendBgRGB(buf, bVal, bVal, bVal)
+				lastBgVal = bVal
+			}
+
+			buf.WriteString("▀")
+		}
+		buf.WriteString("\x1b[0m\x1b[40m\r\n")
+		lastFgVal = -1
+		lastBgVal = -1
+	}
+}
+

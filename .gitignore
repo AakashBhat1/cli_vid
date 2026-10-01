@@ -5,11 +5,38 @@
 *.so
 *.dylib
 /cli_vid
+cli_vid
 *.test
+*.test.exe
 *.out
 *.prof
 *.cover
 coverage.txt
+coverage.out
+coverage.html
+__debug_bin*
+
+# Snapshot & Export Artifacts
+snapshot_*.png
+snapshot_*.ans
+snapshot_*.txt
+*.ans
+
+# Media & Subtitle Files (Local & Test Video/Audio)
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+*.flv
+*.ts
+*.m3u8
+*.mp3
+*.wav
+*.aac
+*.ogg
+*.srt
+!assets/**
 
 # Python & uv Environment / Artifacts
 .venv/
@@ -29,16 +56,6 @@ build/
 .mypy_cache/
 .coverage
 htmlcov/
-
-# Test Media & Video Files (Large binaries)
-sample.mp4
-test_pattern.mp4
-*.mp4
-*.mkv
-*.avi
-*.mov
-*.webm
-!assets/**
 
 # Logs & Diagnostics
 *.log

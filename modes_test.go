@@ -20,7 +20,10 @@ func TestModesRender(t *testing.T) {
 		}
 	}
 
-	modes := []RenderMode{ModeHalfBlock, ModeASCII, ModeBraille, ModeMatrix}
+	var modes []RenderMode
+	for m := ModeHalfBlock; m < modeCount; m++ {
+		modes = append(modes, m)
+	}
 
 	for _, mode := range modes {
 		t.Run(mode.Name(), func(t *testing.T) {

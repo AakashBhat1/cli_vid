@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -266,6 +267,50 @@ func (fs *FrameStream) Close() {
 	})
 }
 
+type ZoomMode int
+
+const (
+	ZoomFit ZoomMode = iota // Letterbox/Pillarbox (default)
+	ZoomFill                // Zoom/Crop to fill without black bars
+	ZoomStretch             // Stretch to fill entire grid
+)
+
+func (z ZoomMode) Name() string {
+	switch z {
+	case ZoomFit:
+		return "Fit (Letterbox)"
+	case ZoomFill:
+		return "Fill (Crop)"
+	case ZoomStretch:
+		return "Stretch"
+	default:
+		return "Fit"
+	}
+}
+
+func (z ZoomMode) ShortName() string {
+	switch z {
+	case ZoomFit:
+		return "FIT"
+	case ZoomFill:
+		return "FILL"
+	case ZoomStretch:
+		return "STRETCH"
+	default:
+		return "FIT"
+	}
+}
+
+func clampByte(v int) byte {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return byte(v)
+}
+
 // ResampleBilinear resamples raw RGB24 bytes to image.RGBA with smooth bilinear filtering and aspect-ratio preservation
 func ResampleBilinear(src []byte, srcW, srcH, dstW, dstH int, outImg *image.RGBA) {
 	resampleAspect(src, srcW, srcH, dstW, dstH, outImg, 1)
@@ -273,6 +318,11 @@ func ResampleBilinear(src []byte, srcW, srcH, dstW, dstH int, outImg *image.RGBA
 
 // pixelAspect is the display width / height of one sample in the render mode.
 func resampleAspect(src []byte, srcW, srcH, dstW, dstH int, outImg *image.RGBA, pixelAspect float64) {
+	resampleAspectZoomColor(src, srcW, srcH, dstW, dstH, outImg, pixelAspect, ZoomFit, 0, 1.0)
+}
+
+// resampleAspectZoomColor performs high-speed multi-threaded bilinear resampling with zoom modes and color adjustments
+func resampleAspectZoomColor(src []byte, srcW, srcH, dstW, dstH int, outImg *image.RGBA, pixelAspect float64, zoom ZoomMode, brightness int, contrast float64) {
 	if srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0 || outImg == nil || len(src)/3/srcW < srcH || outImg.Rect.Dx() < dstW || outImg.Rect.Dy() < dstH {
 		return
 	}
@@ -283,16 +333,36 @@ func resampleAspect(src []byte, srcW, srcH, dstW, dstH int, outImg *image.RGBA, 
 	var targetW, targetH int
 	var startX, startY int
 
-	if srcAspect > dstAspect {
+	switch zoom {
+	case ZoomFill:
+		if srcAspect > dstAspect {
+			targetH = dstH
+			targetW = max(1, int(float64(dstH)*srcAspect))
+			startX = (dstW - targetW) / 2
+			startY = 0
+		} else {
+			targetW = dstW
+			targetH = max(1, int(float64(dstW)/srcAspect))
+			startX = 0
+			startY = (dstH - targetH) / 2
+		}
+	case ZoomStretch:
 		targetW = dstW
-		targetH = max(1, int(float64(dstW)/srcAspect))
-		startX = 0
-		startY = (dstH - targetH) / 2
-	} else {
 		targetH = dstH
-		targetW = max(1, int(float64(dstH)*srcAspect))
-		startX = (dstW - targetW) / 2
+		startX = 0
 		startY = 0
+	default: // ZoomFit
+		if srcAspect > dstAspect {
+			targetW = dstW
+			targetH = max(1, int(float64(dstW)/srcAspect))
+			startX = 0
+			startY = (dstH - targetH) / 2
+		} else {
+			targetH = dstH
+			targetW = max(1, int(float64(dstH)*srcAspect))
+			startX = (dstW - targetW) / 2
+			startY = 0
+		}
 	}
 
 	// Fill background black
@@ -307,60 +377,99 @@ func resampleAspect(src []byte, srcW, srcH, dstW, dstH int, outImg *image.RGBA, 
 	xRatio := ((srcW - 1) << 16) / max(1, targetW-1)
 	yRatio := ((srcH - 1) << 16) / max(1, targetH-1)
 
-	for y := 0; y < targetH; y++ {
-		destY := startY + y
-		if destY < 0 || destY >= dstH {
-			continue
+	numWorkers := 1
+	if targetH >= 32 {
+		numWorkers = runtime.GOMAXPROCS(0)
+		if numWorkers > 4 {
+			numWorkers = 4
 		}
+	}
 
-		sy := (y * yRatio) >> 16
-		yDiff := (y * yRatio) & 0xFFFF
-		yDiffInv := 0x10000 - yDiff
-
-		destRowOffset := destY * outImg.Stride
-		srcRow0 := sy * srcW * 3
-		srcRow1 := (sy + 1) * srcW * 3
-		if sy+1 >= srcH {
-			srcRow1 = srcRow0
-		}
-
-		for x := 0; x < targetW; x++ {
-			destX := startX + x
-			if destX < 0 || destX >= dstW {
+	processRows := func(yStart, yEnd int) {
+		for y := yStart; y < yEnd; y++ {
+			destY := startY + y
+			if destY < 0 || destY >= dstH {
 				continue
 			}
 
-			sx := (x * xRatio) >> 16
-			xDiff := (x * xRatio) & 0xFFFF
-			xDiffInv := 0x10000 - xDiff
+			sy := (y * yRatio) >> 16
+			yDiff := (y * yRatio) & 0xFFFF
+			yDiffInv := 0x10000 - yDiff
 
-			sx0 := sx * 3
-			sx1 := (sx + 1) * 3
-			if sx+1 >= srcW {
-				sx1 = sx0
+			destRowOffset := destY * outImg.Stride
+			srcRow0 := sy * srcW * 3
+			srcRow1 := (sy + 1) * srcW * 3
+			if sy+1 >= srcH {
+				srcRow1 = srcRow0
 			}
 
-			// 4 neighbor pixel samples
-			p00 := srcRow0 + sx0
-			p10 := srcRow0 + sx1
-			p01 := srcRow1 + sx0
-			p11 := srcRow1 + sx1
+			for x := 0; x < targetW; x++ {
+				destX := startX + x
+				if destX < 0 || destX >= dstW {
+					continue
+				}
 
-			// Weights
-			w00 := (xDiffInv * yDiffInv) >> 16
-			w10 := (xDiff * yDiffInv) >> 16
-			w01 := (xDiffInv * yDiff) >> 16
-			w11 := (xDiff * yDiff) >> 16
+				sx := (x * xRatio) >> 16
+				xDiff := (x * xRatio) & 0xFFFF
+				xDiffInv := 0x10000 - xDiff
 
-			r := (int(src[p00])*w00 + int(src[p10])*w10 + int(src[p01])*w01 + int(src[p11])*w11) >> 16
-			g := (int(src[p00+1])*w00 + int(src[p10+1])*w10 + int(src[p01+1])*w01 + int(src[p11+1])*w11) >> 16
-			b := (int(src[p00+2])*w00 + int(src[p10+2])*w10 + int(src[p01+2])*w01 + int(src[p11+2])*w11) >> 16
+				sx0 := sx * 3
+				sx1 := (sx + 1) * 3
+				if sx+1 >= srcW {
+					sx1 = sx0
+				}
 
-			dOffset := destRowOffset + destX*4
-			outImg.Pix[dOffset] = byte(r)
-			outImg.Pix[dOffset+1] = byte(g)
-			outImg.Pix[dOffset+2] = byte(b)
-			outImg.Pix[dOffset+3] = 255
+				// 4 neighbor pixel samples
+				p00 := srcRow0 + sx0
+				p10 := srcRow0 + sx1
+				p01 := srcRow1 + sx0
+				p11 := srcRow1 + sx1
+
+				// Weights
+				w00 := (xDiffInv * yDiffInv) >> 16
+				w10 := (xDiff * yDiffInv) >> 16
+				w01 := (xDiffInv * yDiff) >> 16
+				w11 := (xDiff * yDiff) >> 16
+
+				r := (int(src[p00])*w00 + int(src[p10])*w10 + int(src[p01])*w01 + int(src[p11])*w11) >> 16
+				g := (int(src[p00+1])*w00 + int(src[p10+1])*w10 + int(src[p01+1])*w01 + int(src[p11+1])*w11) >> 16
+				b := (int(src[p00+2])*w00 + int(src[p10+2])*w10 + int(src[p01+2])*w01 + int(src[p11+2])*w11) >> 16
+
+				if contrast != 1.0 || brightness != 0 {
+					r = int(float64(r-128)*contrast) + 128 + brightness
+					g = int(float64(g-128)*contrast) + 128 + brightness
+					b = int(float64(b-128)*contrast) + 128 + brightness
+				}
+
+				dOffset := destRowOffset + destX*4
+				outImg.Pix[dOffset] = clampByte(r)
+				outImg.Pix[dOffset+1] = clampByte(g)
+				outImg.Pix[dOffset+2] = clampByte(b)
+				outImg.Pix[dOffset+3] = 255
+			}
 		}
+	}
+
+	if numWorkers <= 1 {
+		processRows(0, targetH)
+	} else {
+		var wg sync.WaitGroup
+		chunkSize := (targetH + numWorkers - 1) / numWorkers
+		for w := 0; w < numWorkers; w++ {
+			y0 := w * chunkSize
+			y1 := y0 + chunkSize
+			if y1 > targetH {
+				y1 = targetH
+			}
+			if y0 >= targetH {
+				break
+			}
+			wg.Add(1)
+			go func(start, end int) {
+				defer wg.Done()
+				processRows(start, end)
+			}(y0, y1)
+		}
+		wg.Wait()
 	}
 }

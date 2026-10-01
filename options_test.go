@@ -10,17 +10,25 @@ func TestOptions(t *testing.T) {
 	for _, args := range [][]string{
 		{}, {"-mode", "-1", "video.mp4"}, {"-fps", "0", "video.mp4"}, {"-fps", "NaN", "video.mp4"},
 		{"-fps", "Inf", "video.mp4"}, {"-quality", "bad", "video.mp4"}, {"-volume", "101", "video.mp4"},
-		{"-start", "-1s", "video.mp4"}, {"-seek-step", "0s", "video.mp4"}, {"one", "two"},
+		{"-start", "-1s", "video.mp4"}, {"-seek-step", "0s", "video.mp4"}, {"-speed", "0", "video.mp4"},
+		{"-brightness", "200", "video.mp4"}, {"-contrast", "0.01", "video.mp4"}, {"-zoom", "invalid", "video.mp4"},
+		{"-osd", "unknown", "video.mp4"}, {"one", "two"},
 	} {
 		if _, err := parseOptions(args, io.Discard); err == nil {
 			t.Errorf("accepted invalid options %v", args)
 		}
 	}
-	o, err := parseOptions([]string{"-mode", "braille", "-quality", "low", "-start", "1m20s", "-mute", "-loop", "movie.mp4"}, io.Discard)
+	o, err := parseOptions([]string{
+		"-mode", "neon", "-quality", "low", "-start", "1m20s", "-mute", "-loop",
+		"-zoom", "fill", "-osd", "minimal", "-speed", "1.5", "-brightness", "10",
+		"-contrast", "1.2", "-sub", "test.srt", "movie.mp4",
+	}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.Mode != ModeBraille || o.Width != 320 || o.Start != 80*time.Second || !o.Muted || !o.Loop {
+	if o.Mode != ModeNeon || o.Width != 320 || o.Start != 80*time.Second || !o.Muted || !o.Loop ||
+		o.Zoom != ZoomFill || o.OSD != OSDMinimal || o.Speed != 1.5 || o.Brightness != 10 ||
+		o.Contrast != 1.2 || o.SubPath != "test.srt" {
 		t.Fatalf("wrong options: %+v", o)
 	}
 }

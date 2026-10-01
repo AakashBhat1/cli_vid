@@ -20,6 +20,16 @@ const (
 	ActionQuit
 	ActionMute
 	ActionLoop
+	ActionSpeedUp         // ]
+	ActionSpeedDown       // [
+	ActionStepForward     // . or >
+	ActionStepBackward    // , or <
+	ActionToggleOSD       // o, O, Tab
+	ActionToggleZoom      // z, Z
+	ActionSaveSnapshot    // p, P
+	ActionToggleSubtitles // t, T
+	ActionCycleBrightness // b, B
+	ActionCycleContrast   // c, C
 )
 
 // KeyDecoder retains fragmented escape sequences between reads.
@@ -88,6 +98,26 @@ func (d *KeyDecoder) Feed(data []byte) []ActionType {
 				action = ActionMute
 			case 'l', 'L':
 				action = ActionLoop
+			case ']':
+				action = ActionSpeedUp
+			case '[':
+				action = ActionSpeedDown
+			case '.', '>':
+				action = ActionStepForward
+			case ',', '<':
+				action = ActionStepBackward
+			case 'o', 'O', 9:
+				action = ActionToggleOSD
+			case 'z', 'Z':
+				action = ActionToggleZoom
+			case 'p', 'P':
+				action = ActionSaveSnapshot
+			case 't', 'T':
+				action = ActionToggleSubtitles
+			case 'b', 'B':
+				action = ActionCycleBrightness
+			case 'c', 'C':
+				action = ActionCycleContrast
 			}
 		}
 		d.pending = d.pending[n:]

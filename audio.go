@@ -13,11 +13,12 @@ type AudioPlayer struct {
 	cmd      *exec.Cmd
 	done     chan error
 	volume   int
+	speed    float64
 	hasAudio bool
 }
 
 func NewAudioPlayer(file string, hasAudio bool) *AudioPlayer {
-	return &AudioPlayer{file: file, volume: 80, hasAudio: hasAudio}
+	return &AudioPlayer{file: file, volume: 80, speed: 1.0, hasAudio: hasAudio}
 }
 
 func (a *AudioPlayer) Play(startAt time.Duration) error {
@@ -26,8 +27,14 @@ func (a *AudioPlayer) Play(startAt time.Duration) error {
 		return nil
 	}
 	log := &cappedLog{}
-	cmd := exec.Command("ffplay", "-nodisp", "-vn", "-autoexit", "-hide_banner", "-loglevel", "error",
-		"-ss", fmt.Sprintf("%.6f", startAt.Seconds()), "-volume", fmt.Sprint(a.volume), "-i", a.file)
+	args := []string{"-nodisp", "-vn", "-autoexit", "-hide_banner", "-loglevel", "error",
+		"-ss", fmt.Sprintf("%.6f", startAt.Seconds()), "-volume", fmt.Sprint(a.volume)}
+	if a.speed != 1.0 && a.speed >= 0.5 && a.speed <= 2.0 {
+		args = append(args, "-af", fmt.Sprintf("atempo=%.2f", a.speed))
+	}
+	args = append(args, "-i", a.file)
+
+	cmd := exec.Command("ffplay", args...)
 	cmd.Stderr = log
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start ffplay: %w", err)
@@ -77,5 +84,10 @@ func (a *AudioPlayer) Seek(target time.Duration, playing bool) error {
 
 func (a *AudioPlayer) SetVolume(volume int, pos time.Duration, playing bool) error {
 	a.volume = min(100, max(0, volume))
+	return a.Seek(pos, playing)
+}
+
+func (a *AudioPlayer) SetSpeed(speed float64, pos time.Duration, playing bool) error {
+	a.speed = speed
 	return a.Seek(pos, playing)
 }

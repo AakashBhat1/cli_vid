@@ -31,6 +31,62 @@ func seekTarget(current, delta, total, frameDuration time.Duration) time.Duratio
 	return target
 }
 
+var (
+	speedPresets      = []float64{0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0}
+	brightnessPresets = []int{0, 15, 30, -15}
+	contrastPresets   = []float64{1.0, 1.3, 1.6, 0.8}
+)
+
+func cycleSpeed(current float64, up bool) float64 {
+	idx := 3 // 1.0
+	for i, s := range speedPresets {
+		if math.Abs(s-current) < 0.05 {
+			idx = i
+			break
+		}
+	}
+	if up && idx < len(speedPresets)-1 {
+		idx++
+	} else if !up && idx > 0 {
+		idx--
+	}
+	return speedPresets[idx]
+}
+
+func cyclePresetInt(presets []int, current int) int {
+	for i, p := range presets {
+		if p == current {
+			return presets[(i+1)%len(presets)]
+		}
+	}
+	return presets[0]
+}
+
+func cyclePresetFloat(presets []float64, current float64) float64 {
+	for i, p := range presets {
+		if math.Abs(p-current) < 0.05 {
+			return presets[(i+1)%len(presets)]
+		}
+	}
+	return presets[0]
+}
+
+func renderSubtitleOverlay(buf *bytes.Buffer, subs []SubtitleEntry, curTime time.Duration, termW, termH int) {
+	if len(subs) == 0 || termH < 4 {
+		return
+	}
+	text := FindSubtitle(subs, curTime)
+	if text == "" {
+		return
+	}
+	runes := []rune(text)
+	if len(runes) > termW-4 {
+		runes = runes[:termW-4]
+	}
+	pad := max(0, (termW-len(runes))/2)
+	fmt.Fprintf(buf, "\x1b[%d;%dH\x1b[0m\x1b[48;2;0;0;0m\x1b[38;2;254;240;138m\x1b[1m %s \x1b[0m", termH-3, pad+1, string(runes))
+}
+
 func play(ctx context.Context, opts options, info *VideoInfo, actions <-chan ActionType, warning string) error {
 	w, h := decodeDimensions(info, opts.Width)
 	fps := min(opts.FPS, info.FPS)
@@ -42,16 +98,53 @@ func play(ctx context.Context, opts options, info *VideoInfo, actions <-chan Act
 	defer func() { stream.Close() }()
 	audio := NewAudioPlayer(opts.Path, info.HasAudio && !opts.NoAudio)
 	defer audio.Stop()
-	state := OSDState{CurrentTime: opts.Start, TotalTime: info.Duration, Mode: opts.Mode,
-		Volume: opts.Volume, Muted: opts.Muted || opts.NoAudio, Loop: opts.Loop, SeekStep: opts.SeekStep}
+
+	var subtitles []SubtitleEntry
+	if opts.SubPath != "" {
+		if data, err := os.ReadFile(opts.SubPath); err == nil {
+			if parsed, err := ParseSRT(data); err == nil && len(parsed) > 0 {
+				subtitles = parsed
+			}
+		}
+	}
+
+	speed := opts.Speed
+	if speed <= 0 {
+		speed = 1.0
+	}
+	brightness := opts.Brightness
+	contrast := opts.Contrast
+	if contrast <= 0 {
+		contrast = 1.0
+	}
+
+	state := OSDState{
+		CurrentTime:      opts.Start,
+		TotalTime:        info.Duration,
+		Mode:             opts.Mode,
+		Volume:           opts.Volume,
+		Muted:            opts.Muted || opts.NoAudio,
+		Loop:             opts.Loop,
+		SeekStep:         opts.SeekStep,
+		OSDView:          opts.OSD,
+		Zoom:             opts.Zoom,
+		Speed:            speed,
+		SubtitlesEnabled: len(subtitles) > 0,
+		LastActionTime:   time.Now(),
+	}
+
 	notify := func(message string) {
 		state.Notification = message
 		state.NotifyExpiry = time.Now().Add(2 * time.Second)
 	}
 	if warning != "" {
 		notify(warning)
+	} else if len(subtitles) > 0 {
+		notify(fmt.Sprintf("Loaded %d subtitles", len(subtitles)))
 	}
+
 	audio.volume = opts.Volume
+	audio.speed = state.Speed
 	if state.Muted {
 		audio.volume = 0
 	}
@@ -103,6 +196,7 @@ func play(ctx context.Context, opts options, info *VideoInfo, actions <-chan Act
 				return nil
 			}
 			displayDirty = true
+			state.LastActionTime = time.Now()
 			switch action {
 			case ActionQuit:
 				return nil
@@ -132,6 +226,21 @@ func play(ctx context.Context, opts options, info *VideoInfo, actions <-chan Act
 					return err
 				}
 				notify("Seek " + formatDuration(target))
+			case ActionStepForward, ActionStepBackward:
+				if !state.Paused {
+					state.Paused = true
+					audio.Stop()
+					audioStarted = false
+				}
+				delta := frameDuration
+				if action == ActionStepBackward {
+					delta = -delta
+				}
+				target := seekTarget(state.CurrentTime, delta, state.TotalTime, frameDuration)
+				if err := reopen(target, true); err != nil {
+					return err
+				}
+				notify("Step " + formatDuration(target))
 			case ActionVolumeUp, ActionVolumeDown:
 				delta := 10
 				if action == ActionVolumeDown {
@@ -159,9 +268,48 @@ func play(ctx context.Context, opts options, info *VideoInfo, actions <-chan Act
 				state.Mode = (state.Mode + 1) % modeCount
 				frameDirty = true
 				notify(state.Mode.Name())
+			case ActionToggleOSD:
+				state.OSDView = (state.OSDView + 1) % 4
+				frameDirty, displayDirty = true, true
+				notify("OSD: " + state.OSDView.Name())
+			case ActionToggleZoom:
+				state.Zoom = (state.Zoom + 1) % 3
+				frameDirty, displayDirty = true, true
+				notify("Zoom: " + state.Zoom.Name())
+			case ActionSpeedUp, ActionSpeedDown:
+				state.Speed = cycleSpeed(state.Speed, action == ActionSpeedUp)
+				audioError(audio.SetSpeed(state.Speed, state.CurrentTime, audioStarted && !state.Paused))
+				notify(fmt.Sprintf("Speed: %.2gx", state.Speed))
+			case ActionSaveSnapshot:
+				baseName, err := SaveSnapshot(img, frameBuf.Bytes(), state.CurrentTime)
+				if err != nil {
+					notify("Snapshot failed: " + err.Error())
+				} else {
+					notify("Saved " + baseName + ".png & .ans")
+				}
+			case ActionToggleSubtitles:
+				if len(subtitles) == 0 {
+					notify("No subtitles loaded")
+				} else {
+					state.SubtitlesEnabled = !state.SubtitlesEnabled
+					frameDirty, displayDirty = true, true
+					notify(fmt.Sprintf("Subtitles: %t", state.SubtitlesEnabled))
+				}
+			case ActionCycleBrightness:
+				brightness = cyclePresetInt(brightnessPresets, brightness)
+				frameDirty, displayDirty = true, true
+				notify(fmt.Sprintf("Brightness: %+d", brightness))
+			case ActionCycleContrast:
+				contrast = cyclePresetFloat(contrastPresets, contrast)
+				frameDirty, displayDirty = true, true
+				notify(fmt.Sprintf("Contrast: %.1fx", contrast))
 			}
 		case now := <-ticker.C:
 			audioError(audio.PollError())
+			effectiveFrameDuration := frameDuration
+			if state.Speed > 0 {
+				effectiveFrameDuration = time.Duration(float64(frameDuration) / state.Speed)
+			}
 			// Catch up against an absolute deadline instead of adding render time
 			// to every frame. Bounded work keeps controls responsive.
 		advance:
@@ -206,7 +354,7 @@ func play(ctx context.Context, opts options, info *VideoInfo, actions <-chan Act
 					if nextFrameAt.IsZero() {
 						nextFrameAt = now
 					}
-					nextFrameAt = nextFrameAt.Add(frameDuration)
+					nextFrameAt = nextFrameAt.Add(effectiveFrameDuration)
 					frameDirty, displayDirty = true, true
 					if !state.Paused && !audioStarted {
 						audioError(audio.Play(state.CurrentTime))
@@ -251,7 +399,7 @@ func play(ctx context.Context, opts options, info *VideoInfo, actions <-chan Act
 					if img == nil || img.Rect.Dx() != dw || img.Rect.Dy() != dh {
 						img = image.NewRGBA(image.Rect(0, 0, dw, dh))
 					}
-					resampleAspect(raw, w, h, dw, dh, img, state.Mode.PixelAspect())
+					resampleAspectZoomColor(raw, w, h, dw, dh, img, state.Mode.PixelAspect(), state.Zoom, brightness, contrast)
 					frameBuf.Reset()
 					frameBuf.WriteString("\x1b[0m\x1b[40m")
 					RenderFrame(&frameBuf, img, termW, termH-2, state.Mode)
@@ -263,6 +411,9 @@ func play(ctx context.Context, opts options, info *VideoInfo, actions <-chan Act
 				if rendered {
 					out.WriteString("\x1b[H")
 					out.Write(frameBuf.Bytes())
+				}
+				if state.SubtitlesEnabled {
+					renderSubtitleOverlay(&out, subtitles, state.CurrentTime, termW, termH)
 				}
 				fmt.Fprintf(&out, "\x1b[%d;1H", termH-1)
 				RenderOSD(&out, &state, termW)

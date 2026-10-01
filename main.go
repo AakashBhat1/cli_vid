@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"golang.org/x/term"
@@ -23,6 +24,22 @@ func main() {
 	}
 }
 
+func isStreamingSite(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Host)
+	return strings.Contains(host, "youtube.com") ||
+		strings.Contains(host, "youtu.be") ||
+		strings.Contains(host, "twitch.tv") ||
+		strings.Contains(host, "vimeo.com") ||
+		strings.Contains(host, "dailymotion.com") ||
+		strings.Contains(host, "twitter.com") ||
+		strings.Contains(host, "x.com") ||
+		strings.Contains(host, "tiktok.com")
+}
+
 func run(args []string) error {
 	opts, err := parseOptions(args, os.Stderr)
 	if errors.Is(err, flag.ErrHelp) {
@@ -33,6 +50,18 @@ func run(args []string) error {
 	}
 	u, _ := url.Parse(opts.Path)
 	isURL := u != nil && (u.Scheme == "http" || u.Scheme == "https" || u.Scheme == "rtsp")
+	if isURL && isStreamingSite(opts.Path) {
+		if ytPath, err := exec.LookPath("yt-dlp"); err == nil {
+			cmd := exec.Command(ytPath, "-g", "-f", "best[height<=1080]/best", opts.Path)
+			out, err := cmd.Output()
+			if err == nil {
+				resolved := strings.TrimSpace(strings.Split(string(out), "\n")[0])
+				if resolved != "" {
+					opts.Path = resolved
+				}
+			}
+		}
+	}
 	if !isURL {
 		stat, err := os.Stat(opts.Path)
 		if err != nil {
@@ -44,6 +73,9 @@ func run(args []string) error {
 		opts.Path, err = filepath.Abs(opts.Path)
 		if err != nil {
 			return err
+		}
+		if opts.SubPath == "" {
+			opts.SubPath = DetectSubtitleFile(opts.Path)
 		}
 	}
 	if _, err := exec.LookPath("ffprobe"); err != nil {
@@ -61,6 +93,9 @@ func run(args []string) error {
 	defer stop()
 	info, err := probeVideo(ctx, opts.Path)
 	if err != nil {
+		if isURL && isStreamingSite(opts.Path) {
+			return fmt.Errorf("%w\nTip: Install yt-dlp to stream directly from YouTube and web sites (winget install yt-dlp)", err)
+		}
 		return err
 	}
 	if opts.Info {

@@ -21,21 +21,25 @@
 
 ## ✨ Features
 
-- **🎨 4 Distinct Rendering Modes:** Half-block TrueColor (HD), Dithered ASCII, High-density Braille matrix, and Cyberpunk Matrix green. Switch between them instantly during playback.
-- **⚡ Zero-Allocation ANSI Serialization:** Custom terminal serializer achieves **~1.15 ms/frame with 0 heap allocations/frame** for 160×44 cells.
+- **🎨 7 Distinct Rendering Modes:** Half-block TrueColor (HD), Dithered ASCII, High-density Braille matrix, Cyberpunk Matrix green, Vintage Amber Phosphor CRT, Cyberpunk Synthwave Neon Edge (Sobel contour), and Film Noir Grayscale (S-curve contrast). Switch between them instantly during playback.
+- **⚡ Zero-Allocation ANSI Serialization:** Custom terminal serializer achieves **~0.64 ms/frame with 0 heap allocations/frame** for 160×44 cells.
+- **🗛 Full Subtitle Support:** Automatic companion `.srt` detection or manual `-sub` flag with high-contrast, centered subtitle rendering.
+- **⚡ Playback Speed Control:** Variable speed (0.25x to 2.0x) on the fly with synchronized audio pitch preservation via `atempo`.
+- **🎞️ Frame-by-Frame Stepping:** Inspect videos frame by frame (<kbd>.</kbd> / <kbd>,</kbd>) with instant single-frame preview.
+- **📸 Snapshot & ANSI Art Export:** Save the current video frame directly as a PNG screenshot and as an ANSI TrueColor `.ans` text file (<kbd>P</kbd>).
+- **🔎 Dynamic Aspect & Zoom Modes:** Switch on the fly between Letterbox (Fit), Fill / Crop (no black bars), and Stretch.
 - **🔊 Synchronized Audio:** Seamless audio playback powered by `ffplay` with volume adjustments, instant muting, and seek synchronization.
-- **🌐 Universal Media Input:** Plays local video files (`.mp4`, `.mkv`, `.avi`, `.webm`, `.mov`, etc.) and direct network streams (`http://`, `https://`, `rtsp://`).
-- **🎯 Dynamic Bilinear Resampling & Aspect Fitting:** Automatically accounts for 2:1 terminal cell aspect ratios and window resizing without distorted proportions.
+- **🌐 Universal Media Input:** Plays local video files (`.mp4`, `.mkv`, `.avi`, `.webm`, `.mov`, etc.), network streams (`http://`, `https://`, `rtsp://`), and direct YouTube/web streams via `yt-dlp`.
 - **🏎️ Smooth Playback Pipeline:** Frame deadlines account for rendering time; late frames are gracefully dropped during catch-up to prevent stutter.
 - **🎛️ Responsive Interactive Controls:** Separate input listener goroutine handles fragmented escape codes, arrow sequences, and instant key response without blocking the decode loop.
-- **📊 Adaptive On-Screen Display (OSD):** Real-time 2-row terminal overlay showing timecode, interactive progress bar, target FPS, volume, and active mode without edge-scrolling glitches.
+- **📊 Frosted Glass On-Screen Display (OSD):** Real-time overlay featuring a pixel-smooth fractional Unicode progress bar, volume glyphs, active mode, and customizable OSD view modes (Full, Minimal, Hidden, Auto-hide).
 - **🤖 Scriptable Metadata Mode:** `-info` flag prints media dimensions, FPS, duration, and audio streams in structured JSON without initializing terminal graphics.
 
 ---
 
 ## 🖼️ Rendering Modes
 
-Cycle through all 4 modes on the fly by pressing <kbd>M</kbd> during playback:
+Cycle through all 7 modes on the fly by pressing <kbd>M</kbd> during playback:
 
 <p align="center">
   <img src="assets/modes_comparison.jpg" alt="Rendering Modes Comparison" width="100%" />
@@ -47,6 +51,9 @@ Cycle through all 4 modes on the fly by pressing <kbd>M</kbd> during playback:
 | **ASCII** | `-mode ascii` | 70-character density ramp combined with Bayer ordered dithering and TrueColor shading. | Classic retro aesthetic, rich text density. |
 | **Braille Matrix** | `-mode braille` | Uses 8 dots per cell (2×4 dot matrix) with dithering and foreground RGB coloring. | Ultra-high spatial resolution, line art, diagrams. |
 | **Matrix Green** | `-mode matrix` | Shaded monochrome green phosphor ramp using Katakana, numbers, and symbols. | Cyberpunk visual styling, stylized surveillance feeds. |
+| **Amber Phosphor** | `-mode amber` | Warm `#FFB000` vintage amber phosphor CRT terminal glow with retro typography. | Fallout Pip-Boy aesthetic, retro mainframe computing. |
+| **Neon Edge** | `-mode neon` | 3×3 Sobel convolution edge detection highlighting contours in glowing electric cyan and hot magenta. | Tron wireframe, cyberpunk blueprint, stylized visuals. |
+| **Film Noir** | `-mode noir` | Crisp 2-pixel half-block TrueColor with photographic S-curve contrast grayscale. | Black & white cinema, dramatic photography. |
 
 ---
 
@@ -170,7 +177,13 @@ Example `-info` output:
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
-| `-mode` | `block` | Rendering mode: `block`, `ascii`, `braille`, `matrix` (or `0`–`3`). |
+| `-mode` | `block` | Rendering mode: `block`, `ascii`, `braille`, `matrix`, `amber`, `neon`, `noir` (or `0`–`6`). |
+| `-zoom` | `fit` | Aspect ratio zoom mode: `fit` (letterbox), `fill` (crop black bars), `stretch`. |
+| `-osd` | `full` | On-screen display mode: `full`, `minimal`, `hidden`, `auto` (auto-hides after 3s). |
+| `-sub` | | Path to `.srt` subtitle file (auto-detected if alongside video). |
+| `-speed` | `1.0` | Initial playback speed multiplier (`0.25` to `4.0`). |
+| `-brightness` | `0` | Brightness adjustment (`-100` to `100`). |
+| `-contrast` | `1.0` | Contrast multiplier (`0.2` to `4.0`). |
 | `-quality` | `high` | Max decoded dimension (`low`: 320px, `medium`: 640px, `high`: 1280px). Never upscales source. |
 | `-fps` | `30` | Maximum playback frame rate (1–120), capped at the source video's native rate. |
 | `-volume` | `80` | Initial audio volume percentage (0–100). |
@@ -192,14 +205,22 @@ Example `-info` output:
 | <kbd>Space</kbd> | **Play / Pause** toggle; replay when playback has finished. |
 | <kbd>←</kbd> / <kbd>→</kbd> or <kbd>A</kbd> / <kbd>D</kbd> | **Seek Backward / Forward** by the configured `-seek-step` interval. |
 | <kbd>↑</kbd> / <kbd>↓</kbd> or <kbd>W</kbd> / <kbd>S</kbd> or <kbd>+</kbd> / <kbd>-</kbd> | **Volume Up / Down** by 10%. |
-| <kbd>M</kbd> | **Cycle Rendering Modes** (`Block` ➔ `ASCII` ➔ `Braille` ➔ `Matrix`). |
+| <kbd>M</kbd> | **Cycle Rendering Modes** (`Block` ➔ `ASCII` ➔ `Braille` ➔ `Matrix` ➔ `Amber` ➔ `Neon` ➔ `Noir`). |
+| <kbd>[</kbd> / <kbd>]</kbd> | **Playback Speed Down / Up** (`0.25x`, `0.5x`, `0.75x`, `1.0x`, `1.25x`, `1.5x`, `2.0x`). |
+| <kbd>.</kbd> / <kbd>,</kbd> | **Step 1 Frame Forward / Backward** (single-frame inspection). |
+| <kbd>O</kbd> / <kbd>Tab</kbd> | **Cycle OSD View** (`Full` ➔ `Minimal` ➔ `Hidden` ➔ `Auto-Hide`). |
+| <kbd>Z</kbd> | **Cycle Zoom Mode** (`Fit (Letterbox)` ➔ `Fill (Crop)` ➔ `Stretch`). |
+| <kbd>P</kbd> | **Save Snapshot** (exports both PNG screenshot & `.ans` ANSI art text file). |
+| <kbd>T</kbd> | **Toggle Subtitles** On / Off. |
+| <kbd>B</kbd> | **Cycle Brightness** presets (`Normal` ➔ `+15%` ➔ `+30%` ➔ `-15%`). |
+| <kbd>C</kbd> | **Cycle Contrast** presets (`1.0x` ➔ `1.3x` ➔ `1.6x` ➔ `0.8x`). |
 | <kbd>U</kbd> | **Toggle Mute / Unmute**. |
 | <kbd>L</kbd> | **Toggle Looping** mode on/off. |
 | <kbd>R</kbd> | **Restart** video from the beginning. |
 | <kbd>Q</kbd> / <kbd>Esc</kbd> / <kbd>Ctrl+C</kbd> | **Quit** immediately and cleanly restore terminal state. |
 
 > [!TIP]
-> Seeking while paused immediately renders a single-frame preview at the target timestamp without resuming playback!
+> Seeking or stepping while paused immediately renders a single-frame preview at the target timestamp without resuming playback!
 
 ---
 
